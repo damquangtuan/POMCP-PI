@@ -10,8 +10,9 @@ using namespace std;
 
 struct GreedyQNode {
 	int action;
-	double qValue;
 	double greedyValue;
+	double qValue;
+//	vector <double> totalRewardList;
 };
 
 typedef struct GreedyQNode GreedyQNode;
@@ -88,10 +89,13 @@ private:
 
     int SelectRandom() const;
     vector <double> ExpandHDepth(STATE& state, VNODE* vnode, int depth);
-    GreedyQNode ExpandHGreedyDepth(STATE& state, VNODE* vnode, int depth);
+    double ExpandHGreedyDepth(STATE& state, VNODE* vnode, int depth);
 
-    vector <double> SimulateV(STATE& state, VNODE* vnode);
-    vector <double> SimulateQ(STATE& state, QNODE& qnode, int action);
+    vector <double> SimulateVExpand(STATE& state, VNODE* vnode);
+    vector <double> SimulateQExpand(STATE& state, QNODE& qnode, int action);
+
+    double SimulateV(STATE& state, VNODE* vnode);
+    double SimulateQ(STATE& state, QNODE& qnode, int action);
 
 
     void AddRave(VNODE* vnode, double totalReward);
