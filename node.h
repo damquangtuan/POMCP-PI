@@ -110,7 +110,6 @@ public:
     VALUE<int> Value;
 
     int Depth;
-    double MaxValue;
 
     void Initialise();
     static VNODE* Create();

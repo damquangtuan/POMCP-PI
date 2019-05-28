@@ -5,7 +5,6 @@
 #include "node.h"
 #include "statistic.h"
 
-
 class MCTS
 {
 public:
@@ -68,15 +67,10 @@ private:
     int GreedyUCB(VNODE* vnode, bool ucb) const;
     int HGreedyUCB(VNODE* vnode, bool ucb) const;
     double GreedyUCBValue(QNODE* qnode, bool ucb) const;
-    double ExpectationOverMaxValue(QNODE* qnode) const;
-    double OneStepGreedy(VNODE* vnode) const;
-    int MultiStepGreedy(VNODE* vnode, int H) const;
 
     int SelectRandom() const;
     double SimulateV(STATE& state, VNODE* vnode);
     double SimulateQ(STATE& state, QNODE& qnode, int action);
-    double SimulateVExpand(STATE& state, VNODE* vnode);
-    double SimulateQExpand(STATE& state, QNODE& qnode, int action);
     void AddRave(VNODE* vnode, double totalReward);
     VNODE* ExpandNode(const STATE* state);
     void AddSample(VNODE* node, const STATE& state);

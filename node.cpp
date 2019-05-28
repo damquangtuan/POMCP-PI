@@ -16,7 +16,7 @@ void QNODE::Initialise()
         Children[observation] = 0;
     AlphaData.AlphaSum.clear();
 
-    MaxHGreedyValue = Infinity;
+    MaxHGreedyValue = -Infinity;
 }
 
 void QNODE::SetFather(VNODE* father)

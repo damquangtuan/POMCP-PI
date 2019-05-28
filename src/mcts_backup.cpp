@@ -138,6 +138,43 @@ void MCTS::RolloutSearch()
 	}
 }
 
+//
+//void MCTS::UCTSearch()
+//{
+//    ClearStatistics();
+//    int historyDepth = History.Size();
+//
+//    for (int n = 0; n < Params.NumSimulations; n++)
+//    {
+//        STATE* state = Root->Beliefs().CreateSample(Simulator);
+//        Simulator.Validate(*state);
+//        Status.Phase = SIMULATOR::STATUS::TREE;
+//        if (Params.Verbose >= 2)
+//        {
+//            cout << "Starting simulation" << endl;
+//            Simulator.DisplayState(*state, cout);
+//        }
+//
+//        TreeDepth = 0;
+//        PeakTreeDepth = 0;
+//        double totalReward = SimulateV(*state, Root);
+//        StatTotalReward.Add(totalReward);
+//        StatTreeDepth.Add(PeakTreeDepth);
+//
+//        if (Params.Verbose >= 2)
+//            cout << "Total reward = " << totalReward << endl;
+//        if (Params.Verbose >= 3)
+//            DisplayValue(4, cout);
+//
+//        Simulator.FreeState(state);
+//        History.Truncate(historyDepth);
+//    }
+//
+//    DisplayStatistics(cout);
+//}
+//
+
+
 void MCTS::UCTSearch()
 {
     ClearStatistics();
@@ -157,14 +194,15 @@ void MCTS::UCTSearch()
         TreeDepth = 0;
         PeakTreeDepth = 0;
 
-        Root->Depth=0;
+        vector <double> totalRewardVector = SimulateVExpand(*state, Root);
+        for (int i = 0; i < totalRewardVector.size(); i++)
+        {
+        	StatTotalReward.Add(totalRewardVector[i]);
+        	StatTreeDepth.Add(PeakTreeDepth);
+        }
 
-        double totalReward = SimulateVExpand(*state, Root);
-        StatTotalReward.Add(totalReward);
-        StatTreeDepth.Add(PeakTreeDepth);
-
-        if (Params.Verbose >= 2)
-            cout << "Total reward = " << totalReward << endl;
+//        if (Params.Verbose >= 2)
+//            cout << "Total reward = " << totalReward << endl;
         if (Params.Verbose >= 3)
             DisplayValue(4, cout);
 
@@ -175,11 +213,340 @@ void MCTS::UCTSearch()
     DisplayStatistics(cout);
 }
 
+
+vector <double> MCTS::ExpandHDepth(STATE& state, VNODE* vnode, int depth)
+{
+    int observation;
+    double immediateReward, delayedReward = 0, totalReward = 0;
+    vector <double> totalRewardVector;
+
+    totalRewardVector.clear();
+
+    int historyDepth = History.Size();
+
+//	STATE* state = Root->Beliefs().CreateSample(Simulator);
+
+	depth--;
+
+    for (int action = 0; action < Simulator.GetNumActions(); action++)
+    {
+    	//because it starts from the same vnode, it should share the same state
+        STATE* newstate = Simulator.Copy(state);
+
+        delayedReward = 0;
+
+    	QNODE& qnode = vnode->Child(action);
+
+    	if (Simulator.HasAlpha())
+    		Simulator.UpdateAlpha(qnode, *newstate);
+
+    	bool terminal = Simulator.Step(*newstate, action, observation, immediateReward);
+    	assert(observation >= 0 && observation < Simulator.GetNumObservations());
+    	History.Add(action, observation);
+
+    	History.Truncate(historyDepth);
+
+//    	cout << "TreeDepth; " << TreeDepth << "\n";
+//        if (TreeDepth >= 1)
+//        	AddSample(vnode, state);
+
+        if (terminal == true)
+        {
+    		totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
+    		qnode.Value.Add(totalReward);
+    		//
+    		//and vnode also
+    		vnode->Value.Add(totalReward);
+    		AddRave(vnode, totalReward);
+
+    		totalRewardVector.push_back(totalReward);
+        }
+        //in case it does not have enough expand count
+        else
+        {
+        	while (qnode.Value.GetCount() < Params.ExpandCount)
+        	{
+        		STATE* newRolloutState = Simulator.Copy(*newstate);
+
+        		TreeDepth++;
+
+        		//after rollout we need to update qnode
+        		delayedReward = Rollout(*newRolloutState);
+
+        		TreeDepth--;
+
+        		totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
+        		qnode.Value.Add(totalReward);
+        		//
+        		//and vnode also
+        		vnode->Value.Add(totalReward);
+        		AddRave(vnode, totalReward);
+
+        		totalRewardVector.push_back(totalReward);
+
+        		Simulator.FreeState(newRolloutState);
+        	}
+
+        	//we only expand if depth >= 1
+        	if (depth >= 1)
+        	{
+        		VNODE*& newvnode = qnode.Child(observation);
+
+        		if (!newvnode)
+        			newvnode = ExpandNode(newstate);
+
+
+        		//if continue rollout, we need to update vnode
+        		vector <double> tmpList;
+
+        		tmpList.clear();
+
+//        		TreeDepth++;
+
+        		tmpList = ExpandHDepth(*newstate, newvnode, depth);
+
+//        		TreeDepth--;
+
+        		for (int i = 0; i < tmpList.size(); i++)
+        		{
+        			vnode->Value.Add(tmpList[i]);
+        			AddRave(vnode, tmpList[i]);
+
+        			totalRewardVector.push_back(tmpList[i]);
+        		}
+        	}
+        }
+
+    	//free it
+    	Simulator.FreeState(newstate);
+    	History.Truncate(historyDepth);
+
+    }
+
+//    double averageReward = vnode->Value.GetValue()/vnode->Value.GetCount();
+	return totalRewardVector;
+}
+
+//
+//
+//GreedyQNode MCTS::ExpandHGreedyDepth(STATE& state, VNODE* vnode, int depth)
+//{
+//    int observation;
+//    double immediateReward, delayedReward = 0, totalReward = 0;
+//
+//    int historyDepth = History.Size();
+//
+//    GreedyQNode greedyQ, tmpQ, maxGreedyQ;
+//
+//    maxGreedyQ.action = 0;
+//    maxGreedyQ.qValue = 0;
+//    maxGreedyQ.greedyValue = 0;
+//
+//
+////	STATE* state = Root->Beliefs().CreateSample(Simulator);
+//
+//    depth--;
+//
+//    for (int action = 0; action < Simulator.GetNumActions(); action++)
+//    {
+//    	//because it starts from the same vnode, it should share the same state
+//        STATE* newstate = Simulator.Copy(state);
+//
+//        delayedReward = 0;
+//
+//    	QNODE& qnode = vnode->Child(action);
+//
+//    	if (Simulator.HasAlpha())
+//    		Simulator.UpdateAlpha(qnode, *newstate);
+//
+//    	bool terminal = Simulator.Step(*newstate, action, observation, immediateReward);
+//    	assert(observation >= 0 && observation < Simulator.GetNumObservations());
+//    	History.Add(action, observation);
+//
+//    	History.Truncate(historyDepth);
+//
+////        if (TreeDepth == 1)
+////        	AddSample(vnode, *newstate);
+//
+//        if (terminal == true)
+//        {
+//    		totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
+//    		qnode.Value.Add(totalReward);
+//    		//
+//    		//and vnode also
+//    		vnode->Value.Add(totalReward);
+//    		AddRave(vnode, totalReward);
+//        }
+//        //in case it does not have enough expand count
+//        else
+//        {
+//        	while (qnode.Value.GetCount() < Params.ExpandCount)
+//        	{
+//        		STATE* newRolloutState = Simulator.Copy(*newstate);
+//        		TreeDepth++;
+//
+//        		//after rollout we need to update qnode
+//        		delayedReward = Rollout(*newRolloutState);
+//
+//        		TreeDepth--;
+//
+//        		totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
+//        		qnode.Value.Add(totalReward);
+//        		//
+//        		//and vnode also
+//        		vnode->Value.Add(totalReward);
+//        		AddRave(vnode, totalReward);
+//
+//        		Simulator.FreeState(newRolloutState);
+//        	}
+//
+//        	//we only expand if depth >= 1
+//        	if (depth >= 1)
+//        	{
+//        		VNODE*& newvnode = qnode.Child(observation);
+//
+//        		if (!newvnode)
+//        			newvnode = ExpandNode(newstate);
+//
+//
+//        		//if continue rollout, we need to update vnode
+//        		tmpQ = ExpandHGreedyDepth(*newstate, newvnode, depth);
+//
+//
+//        		vnode->Value.Add(tmpQ.qValue);
+//        		AddRave(vnode, tmpQ.qValue);
+//        	}
+//        }
+//
+//    	//free it
+//    	Simulator.FreeState(newstate);
+//    	History.Truncate(historyDepth);
+//    }
+//
+//    //    if (depth == 0)
+//    //    {
+//    //    	greedyQ.qValue = vnode->Value.GetValue();
+//    //    	GreedyQNode tmp = GreedyHUCB(vnode, true);
+//    //    	greedyQ.action = tmp.action;
+//    //    	greedyQ.greedyValue = tmp.greedyValue;
+//    //    	return greedyQ;
+//    //    }
+//    //    else
+//    //    {
+//    //    	greedyQ.qValue = vnode->Value.GetValue();
+//    //    }
+////    return vnode->Value.GetValue();
+//
+//    greedyQ = GreedyHUCB(vnode, true);
+//
+//
+//    return greedyQ;
+//}
+//
+//
+//
+
+
+double MCTS::ExpandHGreedyDepth(STATE& state, VNODE* vnode, int depth)
+{
+    int observation;
+    double immediateReward, delayedReward = 0, totalReward = 0;
+
+    int historyDepth = History.Size();
+
+    depth--;
+
+    for (int action = 0; action < Simulator.GetNumActions(); action++)
+    {
+    	//because it starts from the same vnode, it should share the same state
+        STATE* newstate = Simulator.Copy(state);
+
+        delayedReward = 0;
+
+    	QNODE& qnode = vnode->Child(action);
+
+    	if (Simulator.HasAlpha())
+    		Simulator.UpdateAlpha(qnode, *newstate);
+
+    	bool terminal = Simulator.Step(*newstate, action, observation, immediateReward);
+    	assert(observation >= 0 && observation < Simulator.GetNumObservations());
+    	History.Add(action, observation);
+
+    	History.Truncate(historyDepth);
+
+//        if (TreeDepth == 1)
+//        	AddSample(vnode, state);
+
+        if (terminal == true)
+        {
+    		totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
+    		qnode.Value.Add(totalReward);
+    		//
+    		//and vnode also
+    		vnode->Value.Add(totalReward);
+    		AddRave(vnode, totalReward);
+        }
+        //in case it does not have enough expand count
+        else
+        {
+        	while (qnode.Value.GetCount() < Params.ExpandCount)
+        	{
+        		STATE* newRolloutState = Simulator.Copy(*newstate);
+
+        		//after rollout we need to update qnode
+        		delayedReward = Rollout(*newRolloutState);
+
+
+        		totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
+        		qnode.Value.Add(totalReward);
+        		//
+        		//and vnode also
+        		vnode->Value.Add(totalReward);
+        		AddRave(vnode, totalReward);
+
+        		Simulator.FreeState(newRolloutState);
+        	}
+
+        	//we only expand if depth >= 1
+        	if (depth >= 1)
+        	{
+        		VNODE*& newvnode = qnode.Child(observation);
+
+        		if (!newvnode)
+        			newvnode = ExpandNode(newstate);
+
+
+        		//if continue rollout, we need to update vnode
+        		double tmpreward = ExpandHGreedyDepth(*newstate, newvnode, depth);
+
+        		vnode->Value.Add(tmpreward);
+        		AddRave(vnode, tmpreward);
+        	}
+        }
+
+    	//free it
+    	Simulator.FreeState(newstate);
+    	History.Truncate(historyDepth);
+    }
+
+    int n = vnode->Value.GetCount();
+    return double(vnode->Value.GetValue()/n);
+}
+
+
 double MCTS::SimulateV(STATE& state, VNODE* vnode)
 {
-    int action = HGreedyUCB(vnode, true);
+	int h = Params.HGreedy;
 
-    int hgreedy = Params.HGreedy;
+	//make copy of the current state
+    STATE* newstate = Simulator.Copy(state);
+
+	ExpandHGreedyDepth(*newstate, vnode, h);
+    //free the state
+	Simulator.FreeState(newstate);
+
+	int action = GreedyUCB(vnode, true);
+
 
     PeakTreeDepth = TreeDepth;
     if (TreeDepth >= Params.MaxDepth) // search horizon reached
@@ -189,11 +556,6 @@ double MCTS::SimulateV(STATE& state, VNODE* vnode)
         AddSample(vnode, state);
 
     QNODE& qnode = vnode->Child(action);
-
-    qnode.SetFather(vnode);
-
-    qnode.Depth = vnode->Depth;
-
     double totalReward = SimulateQ(state, qnode, action);
     vnode->Value.Add(totalReward);
     AddRave(vnode, totalReward);
@@ -204,7 +566,6 @@ double MCTS::SimulateQ(STATE& state, QNODE& qnode, int action)
 {
     int observation;
     double immediateReward, delayedReward = 0;
-    int hgreedy = Params.HGreedy;
 
     if (Simulator.HasAlpha())
         Simulator.UpdateAlpha(qnode, state);
@@ -221,21 +582,14 @@ double MCTS::SimulateQ(STATE& state, QNODE& qnode, int action)
     }
 
     VNODE*& vnode = qnode.Child(observation);
-
     if (!vnode && !terminal && qnode.Value.GetCount() >= Params.ExpandCount)
-    {
         vnode = ExpandNode(&state);
-        vnode->Depth = qnode.Depth + 1;
-    }
 
     if (!terminal)
     {
         TreeDepth++;
         if (vnode)
-        {
-            vnode->SetFather(&qnode);
             delayedReward = SimulateV(state, vnode);
-        }
         else
             delayedReward = Rollout(state);
         TreeDepth--;
@@ -243,70 +597,86 @@ double MCTS::SimulateQ(STATE& state, QNODE& qnode, int action)
 
     double totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
     qnode.Value.Add(totalReward);
-
-    if (qnode.Depth >= hgreedy)
-    {
-    	VNODE* fatherVnode;
-    	QNODE* currentQnode = &qnode;
-
-    	for (int iter = 0; iter < hgreedy; iter++)
-    	{
-    		fatherVnode = currentQnode->Father();
-    		double maxValue = OneStepGreedy(fatherVnode);
-    		currentQnode->MaxHGreedyValue = maxValue;
-
-    		currentQnode = fatherVnode->Father();
-    		maxValue = ExpectationOverMaxValue(currentQnode);
-    		fatherVnode->MaxValue = maxValue;
-    	}
-
-//    	cout << "Current Depth: " << qnode.Depth << "\n";
-//    	cout << "Depth: " << current->Depth << "\n";
-//    	cout << "Value: " << current->Value.GetValue() << "\n";
-//    	double maxGreedyValue = GreedyUCBValue(&qnode, true);
-//    	if( (current->MaxHGreedyValue <= maxGreedyValue)) //|| (current->MaxHGreedyValue == Infinity))
-//    		current->MaxHGreedyValue = maxGreedyValue;
-    }
-
     return totalReward;
 }
 
 
 
-double MCTS::SimulateVExpand(STATE& state, VNODE* vnode)
+vector <double> MCTS::SimulateVExpand(STATE& state, VNODE* vnode)
 {
-    int action = HGreedyUCB(vnode, true);
+	int h = Params.HGreedy;
 
-    int hgreedy = Params.HGreedy;
+	//make copy of the current state
+    STATE* newstate = Simulator.Copy(state);
+
+    vector <double> totalRewardVector;
+
+    totalRewardVector.clear();
+
+    vector <double> tmpVector;
+
+    totalRewardVector = ExpandHDepth(*newstate, vnode, h);
+
+//	for (int i = 0; i < totalRewardVector.size(); i++)
+//	{
+//		vnode->Value.Add(totalRewardVector[i]);
+//		AddRave(vnode, totalRewardVector[i]);
+//	}
+
+    //expand the current vnode
+//    GreedyQNode greedyQ = ExpandHGreedyDepth(*newstate, vnode, h);
+
+    //free the state
+    Simulator.FreeState(newstate);
+
+	int action = GreedyUCB(vnode, true);
+
+//    int action = greedyQ.action;
 
     PeakTreeDepth = TreeDepth;
+
     if (TreeDepth >= Params.MaxDepth) // search horizon reached
-        return 0;
+        return totalRewardVector;
 
     if (TreeDepth == 1)
         AddSample(vnode, state);
 
     QNODE& qnode = vnode->Child(action);
 
-    qnode.SetFather(vnode);
+    tmpVector.clear();
+    tmpVector = SimulateQExpand(state, qnode, action);
 
-    qnode.Depth = vnode->Depth;
 
-    double totalReward = SimulateQExpand(state, qnode, action);
-    vnode->Value.Add(totalReward);
-    AddRave(vnode, totalReward);
-    return totalReward;
+	for (int i = 0; i < tmpVector.size(); i++)
+	{
+		vnode->Value.Add(tmpVector[i]);
+		AddRave(vnode, tmpVector[i]);
+	    totalRewardVector.push_back(tmpVector[i]);
+	}
+
+    return totalRewardVector;
 }
 
-double MCTS::SimulateQExpand(STATE& state, QNODE& qnode, int action)
+vector <double> MCTS::SimulateQExpand(STATE& state, QNODE& qnode, int action)
 {
     int observation;
     double immediateReward, delayedReward = 0;
-    int hgreedy = Params.HGreedy;
+
+    vector <double> totalRewardVector;
+
+    totalRewardVector.clear();
+
+    vector <double> tmpVector;
+
+    tmpVector.clear();
+
+    tmpVector.push_back(delayedReward);
 
     if (Simulator.HasAlpha())
         Simulator.UpdateAlpha(qnode, state);
+
     bool terminal = Simulator.Step(state, action, observation, immediateReward);
+
     assert(observation >= 0 && observation < Simulator.GetNumObservations());
     History.Add(action, observation);
 
@@ -316,72 +686,45 @@ double MCTS::SimulateQExpand(STATE& state, QNODE& qnode, int action)
         Simulator.DisplayObservation(state, observation, cout);
         Simulator.DisplayReward(immediateReward, cout);
         Simulator.DisplayState(state, cout);
+        cout << "terminal: " << terminal << "\n";
     }
 
     VNODE*& vnode = qnode.Child(observation);
-
     if (!vnode && !terminal && qnode.Value.GetCount() >= Params.ExpandCount)
     {
         vnode = ExpandNode(&state);
-        vnode->Depth = qnode.Depth + 1;
     }
 
-    bool isRollout = false;
     if (!terminal)
     {
         TreeDepth++;
+
         if (vnode)
         {
-            vnode->SetFather(&qnode);
-            delayedReward = SimulateVExpand(state, vnode);
+        	tmpVector = SimulateVExpand(state, vnode);
         }
         else
         {
-        	isRollout = true;
             delayedReward = Rollout(state);
+            tmpVector.push_back(delayedReward);
         }
         TreeDepth--;
     }
 
-    double totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
-    qnode.Value.Add(totalReward);
+	for (int i = 0; i < tmpVector.size(); i++)
+	{
+		double totalReward = immediateReward + Simulator.GetDiscount() * tmpVector[i];
+		qnode.Value.Add(totalReward);
 
-    if (isRollout == true)
-    {
-    	int n = qnode.Value.GetCount();
-    	qnode.MaxHGreedyValue = qnode.Value.GetValue()/n;
-    }
-
-    if (qnode.Depth >= hgreedy)
-    {
-    	VNODE* fatherVnode;
-    	QNODE* currentQnode = &qnode;
-
-    	for (int iter = 0; iter < hgreedy; iter++)
-    	{
-    		fatherVnode = currentQnode->Father();
-    		double maxValue = OneStepGreedy(fatherVnode);
-//    		currentQnode->MaxHGreedyValue = maxValue;
-
-    		currentQnode = fatherVnode->Father();
-    		maxValue = ExpectationOverMaxValue(currentQnode);
-//    		fatherVnode->MaxValue = maxValue;
-    	}
-
-//    	cout << "Current Depth: " << qnode.Depth << "\n";
-//    	cout << "Depth: " << current->Depth << "\n";
-//    	cout << "Value: " << current->Value.GetValue() << "\n";
-//    	double maxGreedyValue = GreedyUCBValue(&qnode, true);
-//    	if( (current->MaxHGreedyValue <= maxGreedyValue)) //|| (current->MaxHGreedyValue == Infinity))
-//    		current->MaxHGreedyValue = maxGreedyValue;
-    }
-
-    return totalReward;
+		totalRewardVector.push_back(totalReward);
+	}
+    return totalRewardVector;
 }
-
 
 void MCTS::AddRave(VNODE* vnode, double totalReward)
 {
+//	if (Params.UseRave == false)
+//		return;
     double totalDiscount = 1.0;
     for (int t = TreeDepth; t < History.Size(); ++t)
     {
@@ -418,6 +761,65 @@ void MCTS::AddSample(VNODE* node, const STATE& state)
     }
 }
 
+GreedyQNode MCTS::GreedyHUCB(VNODE* vnode, bool ucb) const
+{
+    static vector<int> besta;
+    besta.clear();
+    double bestq = -Infinity;
+    int N = vnode->Value.GetCount();
+    double logN = log(N + 1);
+    bool hasalpha = Simulator.HasAlpha();
+
+    GreedyQNode hgreedyUCB;
+    hgreedyUCB.qValue = vnode->Value.GetValue();
+    hgreedyUCB.action = 0;
+    hgreedyUCB.greedyValue = -2*Infinity;
+
+    for (int action = 0; action < Simulator.GetNumActions(); action++)
+    {
+    	double q, alphaq;
+    	int n, alphan;
+
+    	QNODE& qnode = vnode->Child(action);
+    	q = qnode.Value.GetValue();
+    	n = qnode.Value.GetCount();
+
+    	if (Params.UseRave && qnode.AMAF.GetCount() > 0)
+    	{
+    		double n2 = qnode.AMAF.GetCount();
+    		double beta = n2 / (n + n2 + Params.RaveConstant * n * n2);
+    		q = (1.0 - beta) * q + beta * qnode.AMAF.GetValue();
+    	}
+
+    	if (hasalpha && n > 0)
+    	{
+    		Simulator.AlphaValue(qnode, alphaq, alphan);
+    		q = (n * q + alphan * alphaq) / (n + alphan);
+    		//cout << "N = " << n << ", alphaN = " << alphan << endl;
+    		//cout << "Q = " << q << ", alphaQ = " << alphaq << endl;
+    	}
+
+    	if (ucb)
+    		q += FastUCB(N, n, logN);
+
+    	if (q >= bestq)
+    	{
+    		if (q > bestq)
+    			besta.clear();
+    		bestq = q;
+    		besta.push_back(action);
+
+    		hgreedyUCB.greedyValue = bestq;
+    	}
+    }
+
+    assert(!besta.empty());
+	hgreedyUCB.action = besta[Random(besta.size())];
+    return hgreedyUCB;
+}
+
+
+
 int MCTS::GreedyUCB(VNODE* vnode, bool ucb) const
 {
     static vector<int> besta;
@@ -429,193 +831,42 @@ int MCTS::GreedyUCB(VNODE* vnode, bool ucb) const
 
     for (int action = 0; action < Simulator.GetNumActions(); action++)
     {
-        double q, alphaq;
-        int n, alphan;
+    	double q, alphaq;
+    	int n, alphan;
 
-        QNODE& qnode = vnode->Child(action);
-        q = qnode.Value.GetValue();
-        n = qnode.Value.GetCount();
+    	QNODE& qnode = vnode->Child(action);
+    	q = qnode.Value.GetValue();
+    	n = qnode.Value.GetCount();
 
-        if (Params.UseRave && qnode.AMAF.GetCount() > 0)
-        {
-            double n2 = qnode.AMAF.GetCount();
-            double beta = n2 / (n + n2 + Params.RaveConstant * n * n2);
-            q = (1.0 - beta) * q + beta * qnode.AMAF.GetValue();
-        }
+    	if (Params.UseRave && qnode.AMAF.GetCount() > 0)
+    	{
+    		double n2 = qnode.AMAF.GetCount();
+    		double beta = n2 / (n + n2 + Params.RaveConstant * n * n2);
+    		q = (1.0 - beta) * q + beta * qnode.AMAF.GetValue();
+    	}
 
-        if (hasalpha && n > 0)
-        {
-            Simulator.AlphaValue(qnode, alphaq, alphan);
-            q = (n * q + alphan * alphaq) / (n + alphan);
-            //cout << "N = " << n << ", alphaN = " << alphan << endl;
-            //cout << "Q = " << q << ", alphaQ = " << alphaq << endl;
-        }
+    	if (hasalpha && n > 0)
+    	{
+    		Simulator.AlphaValue(qnode, alphaq, alphan);
+    		q = (n * q + alphan * alphaq) / (n + alphan);
+    		//cout << "N = " << n << ", alphaN = " << alphan << endl;
+    		//cout << "Q = " << q << ", alphaQ = " << alphaq << endl;
+    	}
 
-        if (ucb)
-            q += FastUCB(N, n, logN);
+    	if (ucb)
+    		q += FastUCB(N, n, logN);
 
-        if (q >= bestq)
-        {
-            if (q > bestq)
-                besta.clear();
-            bestq = q;
-            besta.push_back(action);
-        }
+    	if (q >= bestq)
+    	{
+    		if (q > bestq)
+    			besta.clear();
+    		bestq = q;
+    		besta.push_back(action);
+    	}
     }
 
     assert(!besta.empty());
     return besta[Random(besta.size())];
-}
-
-double MCTS::ExpectationOverMaxValue(QNODE* qnode) const
-{
-	double ExpValue = 0;
-	bool hasChild = false;
-
-	int N = qnode->Value.GetCount();
-
-	assert(N!=0);
-
-	for (int observation = 0; observation < Simulator.GetNumObservations(); observation++)
-	{
-	    VNODE*& vnode = qnode->Child(observation);
-
-	    if(vnode)
-	    {
-	    	hasChild = true;
-	    	double maxValue = vnode->MaxValue;
-	    	int n = vnode->Value.GetCount();
-	    	ExpValue += double ((maxValue*n)/N);
-
-	    	ExpValue += maxValue;
-	    }
-	}
-
-	if (hasChild == false)
-	{
-		ExpValue = double(qnode->Value.GetValue()/N);
-//		else ExpValue = qnode->Value.GetValue();
-	}
-
-	qnode->MaxHGreedyValue = ExpValue;
-	return ExpValue;
-}
-
-double MCTS::OneStepGreedy(VNODE* vnode) const
-{
-	double maxValue = -Infinity;
-	int maxAction = -1;
-
-	for (int action = 0; action < Simulator.GetNumActions(); action++)
-	{
-		QNODE& qnode = vnode->Child(action);
-		int n = qnode.Value.GetCount();
-		double q = qnode.Value.GetValue();
-
-		if (n == 0)
-		{
-			vnode->MaxValue = Infinity;
-			maxValue = Infinity;
-			return maxValue;
-		}
-		else
-		{
-			double qMaxValue = qnode.MaxHGreedyValue;
-			if (qMaxValue > maxValue)
-			{
-				maxValue = qMaxValue;
-			}
-		}
-	}
-
-	vnode->MaxValue = maxValue;
-	return maxValue;
-}
-
-int MCTS::MultiStepGreedy(VNODE* vnode, int H) const
-{
-}
-
-int MCTS::HGreedyUCB(VNODE* vnode, bool ucb) const
-{
-	static vector<int> besta;
-	besta.clear();
-	double bestq = -Infinity;
-	int N = vnode->Value.GetCount();
-	double logN = log(N + 1);
-	bool hasalpha = Simulator.HasAlpha();
-
-	for (int action = 0; action < Simulator.GetNumActions(); action++)
-	{
-		double q, alphaq;
-		int n, alphan;
-
-		QNODE& qnode = vnode->Child(action);
-		q = qnode.MaxHGreedyValue;
-
-		if (q>=Infinity)
-			q = qnode.Value.GetValue();
-
-		n = qnode.Value.GetCount();
-
-		if (ucb)
-			q += FastUCB(N, n, logN);
-
-		if (q >= bestq)
-		{
-			if (q > bestq)
-				besta.clear();
-			bestq = q;
-			besta.push_back(action);
-		}
-	}
-
-	assert(!besta.empty());
-	return besta[Random(besta.size())];
-}
-
-double MCTS::GreedyUCBValue(QNODE* qnode, bool ucb) const
-{
-    static vector<int> besta;
-    besta.clear();
-    double bestq = -Infinity;
-
-    VNODE* vnode = qnode->Father();
-
-    int N = vnode->Value.GetCount();
-    double logN = log(N + 1);
-    bool hasalpha = Simulator.HasAlpha();
-
-    double q, alphaq;
-    int n, alphan;
-
-    q = qnode->Value.GetValue();
-    n = qnode->Value.GetCount();
-
-    if (Params.UseRave && qnode->AMAF.GetCount() > 0)
-    {
-    	double n2 = qnode->AMAF.GetCount();
-    	double beta = n2 / (n + n2 + Params.RaveConstant * n * n2);
-    	q = (1.0 - beta) * q + beta * qnode->AMAF.GetValue();
-    }
-
-    if (hasalpha && n > 0)
-    {
-    	Simulator.AlphaValue(*qnode, alphaq, alphan);
-    	q = (n * q + alphan * alphaq) / (n + alphan);
-    }
-
-    if (ucb)
-    	q += FastUCB(N, n, logN);
-
-    if (q >= bestq)
-    {
-    	if (q > bestq)
-    		besta.clear();
-    	bestq = q;
-    }
-
-    return bestq;
 }
 
 
@@ -657,6 +908,45 @@ double MCTS::Rollout(STATE& state)
             << " steps, with total reward " << totalReward << endl;
     return totalReward;
 }
+
+double MCTS::RolloutHGreedy(STATE& state)
+{
+    Status.Phase = SIMULATOR::STATUS::ROLLOUT;
+    if (Params.Verbose >= 3)
+        cout << "Starting rollout" << endl;
+
+    double totalReward = 0.0;
+    double discount = 1.0;
+    bool terminal = false;
+    int numSteps;
+    for (numSteps = 0; numSteps < Params.HGreedy && !terminal; ++numSteps)
+    {
+        int observation;
+        double reward;
+
+        int action = Simulator.SelectRandom(state, History, Status);
+        terminal = Simulator.Step(state, action, observation, reward);
+        History.Add(action, observation);
+
+        if (Params.Verbose >= 4)
+        {
+            Simulator.DisplayAction(action, cout);
+            Simulator.DisplayObservation(state, observation, cout);
+            Simulator.DisplayReward(reward, cout);
+            Simulator.DisplayState(state, cout);
+        }
+
+        totalReward += reward * discount;
+        discount *= Simulator.GetDiscount();
+    }
+
+    StatRolloutDepth.Add(numSteps);
+    if (Params.Verbose >= 3)
+        cout << "Ending rollout after " << numSteps
+            << " steps, with total reward " << totalReward << endl;
+    return totalReward;
+}
+
 
 void MCTS::AddTransforms(VNODE* root, BELIEF_STATE& beliefs)
 {
