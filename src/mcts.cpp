@@ -172,6 +172,8 @@ void MCTS::UCTSearch()
         History.Truncate(historyDepth);
     }
 
+    cout << "Tree Depth: " << PeakTreeDepth << "\n";
+
     DisplayStatistics(cout);
 }
 
@@ -346,13 +348,14 @@ double MCTS::SimulateQExpand(STATE& state, QNODE& qnode, int action)
     double totalReward = immediateReward + Simulator.GetDiscount() * delayedReward;
     qnode.Value.Add(totalReward);
 
-    if (isRollout == true)
+    int n = qnode.Value.GetCount();
+
+    if ((isRollout == true))
     {
-    	int n = qnode.Value.GetCount();
     	qnode.MaxHGreedyValue = qnode.Value.GetValue()/n;
     }
 
-    if (qnode.Depth >= hgreedy)
+    if (qnode.Depth >= (hgreedy - 1))
     {
     	VNODE* fatherVnode;
     	QNODE* currentQnode = &qnode;
@@ -363,8 +366,11 @@ double MCTS::SimulateQExpand(STATE& state, QNODE& qnode, int action)
     		double maxValue = OneStepGreedy(fatherVnode);
 //    		currentQnode->MaxHGreedyValue = maxValue;
 
-    		currentQnode = fatherVnode->Father();
-    		maxValue = ExpectationOverMaxValue(currentQnode);
+    		if (fatherVnode->Depth > 0)
+    		{
+    			currentQnode = fatherVnode->Father();
+    			maxValue = ExpectationOverMaxValue(currentQnode);
+    		}
 //    		fatherVnode->MaxValue = maxValue;
     	}
 
