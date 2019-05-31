@@ -129,9 +129,13 @@ int main(int argc, char* argv[])
         exit(1);
     }
 
+    char outputfileBuff[50];
+    sprintf(outputfileBuff, "output.txt_%d_%d_numrun_%d_h_%d_sim_%d"
+    		, size, number, expParams.NumRuns, searchParams.HGreedy, expParams.MaxDoubles);
+
 
     simulator->SetKnowledge(knowledge);
-    EXPERIMENT experiment(*real, *simulator, outputfile, expParams, searchParams);
+    EXPERIMENT experiment(*real, *simulator, outputfileBuff, expParams, searchParams);
     experiment.DiscountedReturn();
 
     delete real;

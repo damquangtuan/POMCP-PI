@@ -172,8 +172,6 @@ void MCTS::UCTSearch()
         History.Truncate(historyDepth);
     }
 
-    cout << "Tree Depth: " << PeakTreeDepth << "\n";
-
     DisplayStatistics(cout);
 }
 
@@ -352,7 +350,7 @@ double MCTS::SimulateQExpand(STATE& state, QNODE& qnode, int action)
 
     if ((isRollout == true))
     {
-    	qnode.MaxHGreedyValue = qnode.Value.GetValue()/n;
+    	qnode.MaxHGreedyValue = qnode.Value.GetValue();
     }
 
     if (qnode.Depth >= (hgreedy - 1))
@@ -490,16 +488,18 @@ double MCTS::ExpectationOverMaxValue(QNODE* qnode) const
 	    {
 	    	hasChild = true;
 	    	double maxValue = vnode->MaxValue;
-	    	int n = vnode->Value.GetCount();
-	    	ExpValue += double ((maxValue*n)/N);
-
+//	    	int n = vnode->Value.GetCount();
+//	    	double logN = log(N + 1);
+//	    	maxValue += FastUCB(N, n, logN);
+//	    	if (n < 1) n = 0;
+//	    	ExpValue += double ((maxValue*n)/N);
 	    	ExpValue += maxValue;
 	    }
 	}
 
 	if (hasChild == false)
 	{
-		ExpValue = double(qnode->Value.GetValue()/N);
+		ExpValue = qnode->Value.GetValue();
 //		else ExpValue = qnode->Value.GetValue();
 	}
 
